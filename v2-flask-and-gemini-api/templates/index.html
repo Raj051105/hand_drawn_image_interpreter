@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flowchart Digitizer</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mermaid/9.4.3/mermaid.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        .container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        
+        .upload-section, .preview-section {
+            padding: 20px;
+            border: 2px dashed #ccc;
+            border-radius: 8px;
+        }
+        
+        .preview-section {
+            min-height: 400px;
+        }
+        
+        #imagePreview {
+            max-width: 100%;
+            margin-top: 10px;
+        }
+        
+        .button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-top: 10px;
+        }
+        
+        .button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+
+        .error {
+            color: red;
+            margin-top: 10px;
+            padding: 10px;
+            background-color: #ffe6e6;
+            border-radius: 4px;
+        }
+
+        #debugOutput {
+            margin-top: 20px;
+            padding: 10px;
+            background-color: #f5f5f5;
+            border-radius: 4px;
+            white-space: pre-wrap;
+            font-family: monospace;
+        }
+    </style>
+</head>
+<body>
+    <h1>Flowchart Digitizer</h1>
+    
+    <div class="container">
+        <div class="upload-section">
+            <h2>Upload Flowchart</h2>
+            <input type="file" id="fileInput" accept="image/png" onChange="previewImage(event)">
+            <div id="imagePreview"></div>
+            <button class="button" onclick="processFlowchart()">Process Flowchart</button>
+            <div id="errorMessage" class="error" style="display: none;"></div>
+            <div id="debugOutput"></div>
+        </div>
+        
+        <div class="preview-section">
+            <h2>Digital Preview</h2>
+            <div id="mermaidOutput"></div>
+            <button class="button" id="saveButton" onclick="saveFlowchart()" disabled>Save Flowchart</button>
+        </div>
+    </div>
+
+    <script>
+        mermaid.initialize({ 
+            startOnLoad: true,
+            theme: 'default',
+            logLevel: 'error',
+            securityLevel: 'loose',
+            flowchart: {
+                curve: 'linear',
+                htmlLabels: true,
+                useMaxWidth: true
+            }
+        });
+        
+        function previewImage(event) {
+            const file = event.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    const img = document.createElement('img');
+                    img.src = e.target.result;
+                    const preview = document.getElementById('imagePreview');
+                    preview.innerHTML = '';
+                    preview.appendChild(img);
+                }
+                reader.readAsDataURL(file);
+            }
+        }
+        
+        function showError(message) {
+            const errorDiv = document.getElementById('errorMessage');
+            errorDiv.textContent = message;
+            errorDiv.style.display = message ? 'block' : 'none';
+        }
+
+        function showDebug(message) {
+            const debugDiv = document.getElementById('debugOutput');
+            debugDiv.textContent = message;
+        }
+        
+        async function processFlowchart() {
+            showError('');
+            const fileInput = document.getElementById('fileInput');
+            const file = fileInput.files[0];
+            
+            if (!file) {
+                showError('Please select an image first');
+                return;
+            }
+            
+            const formData = new FormData();
+            formData.append('image', file);
+            
+            try {
+                const response = await fetch('/process', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+                
+                const flowchartData = JSON.parse(data.result);
+                const mermaidCode = convertToMermaid(flowchartData);
+                showDebug(mermaidCode);
+                
+                try {
+                    const output = document.getElementById('mermaidOutput');
+                    output.innerHTML = `<div class="mermaid">${mermaidCode}</div>`;
+                    await mermaid.init(undefined, output.querySelector('.mermaid'));
+                    document.getElementById('saveButton').disabled = false;
+                } catch (mermaidError) {
+                    throw new Error(`Mermaid error: ${mermaidError.message}`);
+                }
+            } catch (error) {
+                showError(error.message);
+                document.getElementById('saveButton').disabled = true;
+            }
+        }
+        
+        function convertToMermaid(data) {
+            const lines = ['graph TD'];
+            
+            // Add nodes with simplified syntax
+            data.nodes.forEach(node => {
+                const id = node.id;
+                const text = node.text.replace(/"/g, "'");
+                
+                switch(node.type.toLowerCase()) {
+                    case 'start':
+                        lines.push(`    ${id}(("${text}"))`);
+                        break;
+                    case 'decision':
+                        lines.push(`    ${id}{"${text}"}`);
+                        break;
+                    case 'end':
+                    case 'process':
+                    default:
+                        lines.push(`    ${id}["${text}"]`);
+                }
+            });
+            
+            // Add connections with simplified syntax
+            data.connections.forEach(conn => {
+                const label = conn.label ? `|"${conn.label}"| ` : '';
+                lines.push(`    ${conn.from} --> ${label}${conn.to}`);
+            });
+            
+            return lines.join('\n');
+        }
+        
+        function saveFlowchart() {
+            const svg = document.querySelector('#mermaidOutput svg');
+            if (!svg) {
+                showError('No flowchart to save');
+                return;
+            }
+            
+            const serializer = new XMLSerializer();
+            const svgStr = serializer.serializeToString(svg);
+            
+            const link = document.createElement('a');
+            link.download = 'flowchart.svg';
+            link.href = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgStr);
+            link.click();
+        }
+    </script>
+</body>
+</html>

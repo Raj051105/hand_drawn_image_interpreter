@@ -1,0 +1,10 @@
+names:
+  0: start_end
+  1: process
+  2: decision
+  3: connector
+  4: input_output
+path: ./
+test: Test/png
+train: Train/png
+val: Validation/png
